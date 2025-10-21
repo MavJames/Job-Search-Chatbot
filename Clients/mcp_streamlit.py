@@ -16,7 +16,7 @@ import tempfile
 import uuid
 
 # Optional: page config
-st.set_page_config(page_title="Data Analyst Chatbot", layout="wide")
+st.set_page_config(page_title="Job Search Chatbot", layout="wide")
 
 # -----------------------------
 # Embeddings config
@@ -66,7 +66,8 @@ def build_enhanced_system_prompt():
     """Build system prompt incorporating server capabilities file"""
     capabilities = load_server_capabilities()
 
-    base_prompt = """You are an expert Data Analyst that performs exploratory data analysis to help a data analyst with their work. Today is October 3, 2025.
+    base_prompt = """You are an expert Job Search engine, connecting to different servers to provide job searchers with the
+    best opportunities for them.
 
 AVAILABLE TOOLS AND THEIR CAPABILITIES:
 """
@@ -84,7 +85,7 @@ Key Capabilities:
             base_prompt += f"  • {use_case}\n"
         base_prompt += "\n"
 
-    base_prompt += "When given a csv provide all of the data analysis you can provide"
+    base_prompt += ""
     return base_prompt
 
 SYSTEM_PROMPT = build_enhanced_system_prompt()
