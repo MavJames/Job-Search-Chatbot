@@ -1,10 +1,16 @@
 {"mcpServers": {
-  "eda_server": {
-  },     
-  "filesystem": {
+  "linkedin": {
+      "command": "docker",
+      "args": [
+          "run", "--rm", "-i",
+          "-e", "LINKEDIN_COOKIE",
+          "stickerdaniel/linkedin-mcp-server:latest"
+      ]
+    }
   }
 }
-}
+
+
 
 
   
