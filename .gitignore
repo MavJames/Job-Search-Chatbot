@@ -1,3 +1,17 @@
 # Environment files
 .env
 .env.*
+# Python virtual environments
+venv/
+env/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+# Docker files
+*.log
+*.pid
+# macOS files
+.DS_Store
+# VSCode files
+.vscode/
