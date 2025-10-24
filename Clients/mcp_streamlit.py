@@ -10,7 +10,6 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import create_react_agent
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.store.memory import InMemoryStore
-from langmem import create_manage_memory_tool, create_search_memory_tool
 import threading
 import tempfile
 import uuid
@@ -164,10 +163,23 @@ def initialize_memory_system():
     index_cfg = get_embedding_index()
     store = InMemoryStore(index=index_cfg)
     namespace = ("agent_memories",)
-    memory_tools = [
-        create_manage_memory_tool(namespace, store=store),
-        create_search_memory_tool(namespace, store=store),
-    ]
+    # Import langmem lazily because version mismatches in langgraph/langmem can
+    # raise ImportError at import time (see issue with CONFIG_KEY_STORE). If
+    # langmem is not available or incompatible, we return no memory tools but
+    # keep the app running.
+    try:
+        from langmem import create_manage_memory_tool, create_search_memory_tool
+
+        memory_tools = [
+            create_manage_memory_tool(namespace, store=store),
+            create_search_memory_tool(namespace, store=store),
+        ]
+    except Exception as e:  # ImportError or runtime errors from incompatible packages
+        logging.warning(
+            f"langmem not available or failed to import; memory features disabled: {e}"
+        )
+        memory_tools = []
+
     return store, memory_tools
 
 # -----------------------------

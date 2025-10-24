@@ -1,10 +1,16 @@
-{"mcpServers": {
-  "eda_server": {
-  },     
-  "filesystem": {
+{
+  "mcpServers": {
+    "linkedin-spider": {
+      "transport": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "LINKEDIN_EMAIL=mredktk@gmail.com",
+        "-e", "LINKEDIN_PASSWORD=E8-QG_Y4M_4cmbY",
+        "-e", "HEADLESS=true",
+        "-e", "TRANSPORT=stdio",
+        "linkedin-mcp-stdio"
+      ]
+    }
   }
 }
-}
-
-
-  

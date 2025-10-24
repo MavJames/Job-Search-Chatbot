@@ -1,0 +1,23 @@
+{
+  "linkedin-spider": {
+    "description": "LinkedIn scraping spider - provides profile, search, company, connections and conversations scraping tools.",
+    "capabilities": [
+      "scrape_profile(profile_url)",
+      "search_profiles(query, max_results)",
+      "scrape_company(company_url)",
+      "scrape_incoming_connections(max_results)",
+      "scrape_outgoing_connections(max_results)",
+      "scrape_conversations_list(max_results)",
+      "scrape_conversation(participant_name)",
+      "send_connection_request(profile_url, note)",
+      "get_session_status()",
+      "reset_session()"
+    ],
+    "use_cases": [
+      "Enrich a candidate profile by scraping LinkedIn profile pages",
+      "Search LinkedIn for candidate profiles matching a query",
+      "Scrape company profiles and collect insights",
+      "Retrieve conversation threads and connection lists"
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+# Consolidated requirements gathered from the repository
+# Sources:
+# - Servers/linkedin-spider/pyproject.toml (project dependencies and optional extras)
+# - Servers/mcp-linkedin-server/requirements.txt
+# - Client imports (streamlit, langchain-related packages, pandas)
+# Note: some package names/versions are best-effort (client packages may have different pip names).
+
+mcp>=1.2.0
+fastmcp>=0.4.1
+playwright==1.40.0
+python-dotenv>=1.0.0
+cryptography>=35.0.0
+asyncio>=3.4.3
+httpx>=0.24.0
+selenium>=4.35.0
+requests>=2.32.5
+psutil>=5.9.0
+twine>=6.2.0
+cyclopts>=2.0.0
+
+# Dev / tooling (from pyproject optional "dev")
+pytest>=7.2.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+ruff>=0.6.9
+mypy>=1.0.0
+pre-commit>=2.20.0
+
+# Client and other runtime packages used in this repository (add versions if you prefer)
+streamlit
+langchain
+langchain-openai
+langchain-mcp-adapters
+langgraph
+langmem
+pandas
+
+# Build system helpers (from linkedin-spider pyproject)
+hatchling
+uv-dynamic-versioning
+
+# If you plan to run the spider locally, ensure the environment has these installed as well.
+# playwright-stealth
+playwright
+selenium
