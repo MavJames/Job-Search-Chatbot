@@ -8,8 +8,13 @@
         "@modelcontextprotocol/server-filesystem",
         "/Users/mavinjames/Desktop"
       ]
-}
-}
+    },
+    "docx_server": {
+      "command": "python3",
+      "transport": "stdio",
+      "args": ["../Servers/docx_server.py"]
+    }
+  }
 }
 
 

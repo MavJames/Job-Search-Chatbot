@@ -97,7 +97,8 @@ def build_enhanced_system_prompt(resume_text=None):
     """Build system prompt incorporating server capabilities and resume context"""
     capabilities = load_server_capabilities()
 
-    base_prompt = """You are a Job Search Assistant helping candidates find opportunities and navigate applications.
+    base_prompt = """You are a Job Search Assistant helping candidates find opportunities and navigate applications. When asked to create a resume
+    return a docx file that is in Microsoft Word format.
 
 """
 
