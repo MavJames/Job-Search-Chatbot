@@ -6,13 +6,18 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/Users/mavinjames/Desktop"
+        "/Users/carly.watkins/Desktop"
       ]
     },
     "docx_server": {
       "command": "python3",
       "transport": "stdio",
       "args": ["../Servers/docx_server.py"]
+    },
+    "jobspy-server": {
+      "command": "python3",
+      "transport": "stdio",
+      "args": ["../Servers/jobspy_server.py"]
     }
   }
 }
