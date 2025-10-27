@@ -1,16 +1,21 @@
-{"mcpServers": {
-  "linkedin": {
-      "command": "docker",
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "transport": "stdio",
       "args": [
-          "run", "--rm", "-i",
-          "-e", "LINKEDIN_COOKIE",
-          "stickerdaniel/linkedin-mcp-server:latest"
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/mavinjames/Desktop"
       ]
+    },
+    "docx_server": {
+      "command": "python3",
+      "transport": "stdio",
+      "args": ["../Servers/docx_server.py"]
     }
   }
 }
-
-
 
 
   

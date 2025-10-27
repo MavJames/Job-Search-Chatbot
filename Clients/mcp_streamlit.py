@@ -14,13 +14,12 @@ from langmem import create_manage_memory_tool, create_search_memory_tool
 import threading
 import tempfile
 import uuid
+import PyPDF2
+import docx
 
-# Optional: page config
-st.set_page_config(page_title="Job Search Chatbot", layout="wide")
+st.set_page_config(page_title="Job Search Assistant", layout="wide")
 
-# -----------------------------
-# Embeddings config
-# -----------------------------
+#Configures the embedding model to convert text to vectors for semantic search in the memory system
 def get_embedding_index():
     """
     Configure LangMem/InMemoryStore to use Azure or OpenAI embeddings.
@@ -49,9 +48,41 @@ def get_embedding_index():
         f"{', '.join(azure_vars)} or OPENAI_API_KEY"
     )
 
-# -----------------------------
-# Server capabilities + system prompt
-# -----------------------------
+#Extracts information from file based on the type given
+def extract_text_from_pdf(pdf_path):
+    """Extract text from PDF file"""
+    try:
+        text = ""
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+        return text.strip()
+    except Exception as e:
+        logging.error(f"Error extracting text from PDF: {e}")
+        return None
+
+def extract_text_from_docx(docx_path):
+    """Extract text from DOCX file"""
+    try:
+        doc = docx.Document(docx_path)
+        text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+        return text.strip()
+    except Exception as e:
+        logging.error(f"Error extracting text from DOCX: {e}")
+        return None
+
+def extract_resume_text(file_path):
+    """Extract text from resume file (PDF or DOCX)"""
+    file_path = Path(file_path)
+    if file_path.suffix.lower() == '.pdf':
+        return extract_text_from_pdf(file_path)
+    elif file_path.suffix.lower() in ['.docx', '.doc']:
+        return extract_text_from_docx(file_path)
+    else:
+        return None
+
+#Builds system prompt with the extrected text from the attached resume, NEEDS TO BE OPTIMIZED
 def load_server_capabilities():
     """Load server capabilities from JSON file"""
     capabilities_path = Path(__file__).resolve().parent / "../Servers/server_capabilities.json"
@@ -62,52 +93,38 @@ def load_server_capabilities():
         logging.warning(f"Server capabilities file not found: {capabilities_path}")
         return {}
 
-def build_enhanced_system_prompt():
-    """Build system prompt incorporating server capabilities file"""
+def build_enhanced_system_prompt(resume_text=None):
+    """Build system prompt incorporating server capabilities and resume context"""
     capabilities = load_server_capabilities()
 
-    base_prompt = """You are an expert Job Search engine, connecting to different servers to provide job searchers with the
-    best opportunities for them.
+    base_prompt = """You are a Job Search Assistant helping candidates find opportunities and navigate applications. When asked to create a resume
+    return a docx file that is in Microsoft Word format.
 
-AVAILABLE TOOLS AND THEIR CAPABILITIES:
+"""
+
+    if resume_text:
+        base_prompt += f"""CANDIDATE RESUME:
+{resume_text}
+
+"""
+
+    base_prompt += """AVAILABLE TOOLS:
 """
     for server_name, config in capabilities.items():
-        base_prompt += f"""
-**{server_name.upper()}**
-Description: {config.get('description', 'No description available')}
+        base_prompt += f"\n{server_name}: {config.get('description', '')}\n"
 
-Key Capabilities:
-"""
-        for capability in config.get('capabilities', []):
-            base_prompt += f"  • {capability}\n"
-        base_prompt += f"\nBest used for:\n"
-        for use_case in config.get('use_cases', []):
-            base_prompt += f"  • {use_case}\n"
-        base_prompt += "\n"
-
-    base_prompt += ""
     return base_prompt
 
-SYSTEM_PROMPT = build_enhanced_system_prompt()
-
-# -----------------------------
-# Logging / env / config
-# -----------------------------
+#Logging to track flow, loading env, getting json file of servers, and titling the streamlit app
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
 CONFIG_PATH = Path(__file__).resolve().parent / "../Servers/servers_config.json"
+st.title("Job Search Assistant")
 
-# -----------------------------
-# App Title
-# -----------------------------
-st.title("Apiture Multi-Platform Chatbot")
-
-# Keep last N turns (turn = user+assistant)
+#Keep last N turns (turn = user+assistant)
 WINDOW_TURNS = 3
 
-# -----------------------------
-# LLM builders
-# -----------------------------
+#Creates the brain of the agent by connecting to an llm that is provided in the env, checks for credentials Azure first then falls back to OpenAI
 def build_llm():
     azure_vars = [
         "AZURE_OPENAI_API_KEY",
@@ -140,9 +157,7 @@ def build_llm():
         "AZURE_OPENAI_* vars or OPENAI_API_KEY"
     )
 
-# -----------------------------
-# Event loop (persistent)
-# -----------------------------
+#Toughest part mcp servers run asynchronously but streamlit doesn't, this creates a separate thread running an async event loop
 @st.cache_resource
 def get_event_loop():
     """Create and return a persistent event loop for async operations"""
@@ -156,9 +171,7 @@ def get_event_loop():
     thread.start()
     return loop
 
-# -----------------------------
-# Memory (LangMem)
-# -----------------------------
+#Database to hold memories that are mainly prompted by the user and uses the embedding model
 @st.cache_resource
 def initialize_memory_system():
     index_cfg = get_embedding_index()
@@ -170,9 +183,8 @@ def initialize_memory_system():
     ]
     return store, memory_tools
 
-# -----------------------------
-# Agent initialization
-# -----------------------------
+#Initializing the agent: Reads the config file to see which servers to connect to, connects to the servers and collect the tools from them
+#Adds memory tool, runs build_llm and creates the REACT agent from Langgraph
 @st.cache_resource
 def initialize_agent():
     """Initialize the agent with proper async handling"""
@@ -227,9 +239,7 @@ def initialize_agent():
     future = asyncio.run_coroutine_threadsafe(_create_agent(), loop)
     return future.result(timeout=120)
 
-# -----------------------------
-# Agent invocation helper
-# -----------------------------
+#Lets streamlit use asynchronous servers, even though it is synchronous 
 def run_agent_sync(messages, agent):
     loop = get_event_loop()
 
@@ -250,11 +260,9 @@ def run_agent_sync(messages, agent):
     future = asyncio.run_coroutine_threadsafe(_run_agent(), loop)
     return future.result(timeout=120)
 
-# -----------------------------
-# Initialize agent
-# -----------------------------
+#Runs initialize agent with the streamlit spinner to show the process is running
 try:
-    with st.spinner("Initializing agent and connecting to servers..."):
+    with st.spinner("Initializing agent and connecting to job search servers..."):
         agent, client, sessions, store = initialize_agent()
 except Exception as e:
     st.error(f"Failed to initialize agent: {str(e)}")
@@ -266,50 +274,48 @@ except Exception as e:
 # -----------------------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "uploaded_csv_path" not in st.session_state:
-    st.session_state.uploaded_csv_path = None
+if "resume_path" not in st.session_state:
+    st.session_state.resume_path = None
+if "resume_text" not in st.session_state:
+    st.session_state.resume_text = None
 
-# -----------------------------
-# CSV uploader + preview + save to absolute path
-# -----------------------------
+#Resume uploader for pdf or docx file formats and generates a uuid to avoid filename conflicts, remembers for entire session
+with st.sidebar:
+    st.header("Upload Resume")
+    uploaded_resume = st.file_uploader("Choose your resume", type=["pdf", "docx", "doc"])
 
-uploaded_csv = st.file_uploader("Choose a CSV file", type=["csv"])
-if uploaded_csv:
-    import pandas as pd  # Local import is fine; pandas already in deps
-    # Preview (small sample for speed)
-    try:
-        preview_df = pd.read_csv(uploaded_csv, nrows=2000)
-        st.caption(f"Preview of {uploaded_csv.name}")
-        st.dataframe(preview_df.head(50), use_container_width=True)
-    except Exception as e:
-        st.error(f"Could not read CSV preview: {e}")
+    if uploaded_resume:
+        tmp_dir = Path(tempfile.gettempdir())
+        safe_name = f"{uuid.uuid4()}_{uploaded_resume.name}"
+        resume_abs_path = tmp_dir / safe_name
+        
+        with open(resume_abs_path, "wb") as f:
+            f.write(uploaded_resume.getbuffer())
 
-    # Persist to an absolute path so external MCP processes can read it
-    tmp_dir = Path(tempfile.gettempdir())
-    safe_name = f"{uuid.uuid4()}_{uploaded_csv.name}"
-    csv_abs_path = tmp_dir / safe_name
-    with open(csv_abs_path, "wb") as f:
-        f.write(uploaded_csv.getbuffer())
+        resume_text = extract_resume_text(resume_abs_path)
+        
+        if resume_text:
+            st.success("Resume uploaded")
+            st.session_state.resume_path = str(resume_abs_path)
+            st.session_state.resume_text = resume_text
+        else:
+            st.error("Could not extract text from resume")
+            st.session_state.resume_path = None
+            st.session_state.resume_text = None
 
-    st.success(f"Saved CSV to: {csv_abs_path}")
-    st.session_state.uploaded_csv_path = str(csv_abs_path)
 
-# -----------------------------
-# Helper: automatically include CSV path in prompts
-# -----------------------------
-def _with_csv_context(text: str) -> str:
-    p = st.session_state.get("uploaded_csv_path")
-    if p:
-        return f"{text}\n\n(Uploaded CSV absolute path: {p})"
-    return text
+# Build system prompt with resume context
+def get_current_system_prompt():
+    """Get system prompt with current resume context"""
+    resume_text = st.session_state.get("resume_text")
+    return build_enhanced_system_prompt(resume_text)
 
-# -----------------------------
-# Chat input + agent call
-# -----------------------------
-user_input = st.chat_input("Ask something...")
+#User interface that takes text handles memory, sends input to agent and then saves reponse in history
+user_input = st.chat_input("Ask about jobs...")
+
 if user_input:
     st.session_state.chat_history.append(
-        {"role": "user", "content": _with_csv_context(user_input)}
+        {"role": "user", "content": user_input}
     )
 
     msgs = st.session_state.chat_history
@@ -318,16 +324,15 @@ if user_input:
 
     with st.spinner("Processing..."):
         try:
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}] + window
+            system_prompt = get_current_system_prompt()
+            messages = [{"role": "system", "content": system_prompt}] + window
             reply = run_agent_sync(messages, agent)
             st.session_state.chat_history.append({"role": "assistant", "content": reply})
         except Exception as e:
-            err = f"Error processing request: {str(e)}"
+            err = f"Error: {str(e)}"
             st.session_state.chat_history.append({"role": "assistant", "content": err})
 
-# -----------------------------
-# Render conversation
-# -----------------------------
+#Shows past messages in session
 for msg in st.session_state.chat_history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])

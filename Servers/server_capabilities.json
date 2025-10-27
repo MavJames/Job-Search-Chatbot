@@ -1,0 +1,13 @@
+{
+  "linkedin": {
+    "description": "Linkedin connector",
+    "capabilities": [
+      "Provide summary of a users linked profile"
+    ],
+    "use_cases": [
+      "Job Experience",
+      "Education",
+      "Skills"
+    ]
+  }
+}
