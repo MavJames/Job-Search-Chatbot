@@ -6,7 +6,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/Users/carly.watkins/Desktop"
+        "/Users/mavinjames/Desktop"
       ]
     },
     "docx_server": {
