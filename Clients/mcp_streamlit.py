@@ -279,6 +279,20 @@ def initialize_agent():
         try:
             with open(CONFIG_PATH) as f:
                 config = json.load(f)
+
+            filesystem_cfg = config.get("mcpServers", {}).get("filesystem", {})
+            fs_args = filesystem_cfg.get("args") if filesystem_cfg else None
+            if fs_args:
+                env_root = os.getenv("FILESYSTEM_ROOT")
+                if env_root:
+                    fs_root = Path(env_root).expanduser().resolve()
+                else:
+                    candidate = Path(fs_args[-1])
+                    if not candidate.is_absolute():
+                        candidate = (CONFIG_PATH.resolve().parent / candidate).resolve()
+                    fs_root = candidate
+                fs_args[-1] = str(fs_root)
+
             servers = config.get("mcpServers", config.get("servers", {}))
             if not servers:
                 raise ValueError("No servers found in configuration")

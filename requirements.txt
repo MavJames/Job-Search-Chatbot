@@ -1,0 +1,12 @@
+fastmcp
+jobspy
+langchain-mcp-adapters
+langchain-openai
+langgraph
+langmem
+openai
+pandas
+PyPDF2
+python-docx
+python-dotenv
+streamlit
