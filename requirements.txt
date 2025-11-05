@@ -1,5 +1,5 @@
 fastmcp
-jobspy
+python-jobspy
 langchain-mcp-adapters
 langchain-openai
 langgraph
