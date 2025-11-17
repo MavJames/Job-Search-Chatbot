@@ -315,6 +315,129 @@ def create_formatted_document(
     except Exception as e:
         raise Exception(f"Error creating document: {str(e)}")
 
+def create_resume_analysis_report(
+    output_path: str,
+    resume_text: str,
+    job_description_text: str,
+    candidate_name: str = "Candidate"
+) -> str:
+    """
+    Analyzes a resume against a job description and creates a .docx feedback report.
+    This tool provides "sentient" analysis by comparing documents and offering strategic advice.
+    
+    Args:
+        output_path: Full path where the .docx feedback report should be saved.
+        resume_text: The full text of the candidate's resume.
+        job_description_text: The full text of the target job description.
+        candidate_name: The candidate's name for personalizing the report.
+        
+    Returns:
+        Success message with the file path of the generated report.
+    """
+    try:
+        doc = Document()
+        
+        # --- Document Setup ---
+        sections = doc.sections
+        for section in sections:
+            section.top_margin = Inches(0.75)
+            section.bottom_margin = Inches(0.75)
+            section.left_margin = Inches(1)
+            section.right_margin = Inches(1)
+
+        # --- Report Header ---
+        title_para = doc.add_paragraph("Resume Analysis & Tailoring Report")
+        title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_run = title_para.runs[0]
+        title_run.font.size = Pt(18)
+        title_run.font.bold = True
+        
+        subtitle_para = doc.add_paragraph(f"Prepared for {candidate_name}")
+        subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        subtitle_para.runs[0].font.size = Pt(12)
+        subtitle_para.runs[0].italic = True
+        subtitle_para.paragraph_format.space_after = Pt(18)
+
+        # --- Simple Keyword Analysis ---
+        # A more "sentient" version would use NLP, but this is a good start.
+        common_skills = [
+            'python', 'java', 'c++', 'javascript', 'typescript', 'sql', 'nosql', 'react', 'angular', 'vue',
+            'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'terraform', 'ansible', 'jenkins', 'ci/cd',
+            'machine learning', 'deep learning', 'nlp', 'computer vision', 'data analysis', 'etl',
+            'project management', 'agile', 'scrum', 'product management', 'ui/ux', 'design'
+        ]
+        
+        jd_lower = job_description_text.lower()
+        resume_lower = resume_text.lower()
+        
+        jd_keywords = {skill for skill in common_skills if skill in jd_lower}
+        resume_keywords = {skill for skill in common_skills if skill in resume_lower}
+        
+        matched_keywords = jd_keywords.intersection(resume_keywords)
+        missing_keywords = jd_keywords.difference(resume_keywords)
+
+        # --- Report Content ---
+        add_section_heading(doc, "Analysis Summary")
+        doc.add_paragraph(
+            "This report provides feedback on how well your resume aligns with the target job description. "
+            "Use these suggestions to tailor your application and increase your chances of success."
+        ).runs[0].font.size = Pt(11)
+
+        # Matched Keywords
+        add_section_heading(doc, "Strengths: Matched Keywords")
+        if matched_keywords:
+            doc.add_paragraph(
+                "Your resume effectively highlights the following skills mentioned in the job description:",
+                style='Intense Quote'
+            )
+            for skill in sorted(list(matched_keywords)):
+                doc.add_paragraph(skill.title(), style='List Bullet').runs[0].font.size = Pt(10)
+        else:
+            doc.add_paragraph(
+                "No significant keyword overlap was found. It is highly recommended to tailor your resume.",
+                style='Intense Quote'
+            )
+        doc.paragraphs[-1].paragraph_format.space_after = Pt(12)
+
+        # Missing Keywords
+        add_section_heading(doc, "Opportunities: Missing Keywords")
+        if missing_keywords:
+            doc.add_paragraph(
+                "Consider incorporating the following keywords from the job description if you have experience with them:",
+                style='Intense Quote'
+            )
+            for skill in sorted(list(missing_keywords)):
+                doc.add_paragraph(skill.title(), style='List Bullet').runs[0].font.size = Pt(10)
+        else:
+            doc.add_paragraph(
+                "Great job! Your resume appears to contain all the key skills identified in the job description.",
+                style='Intense Quote'
+            )
+        doc.paragraphs[-1].paragraph_format.space_after = Pt(12)
+        
+        # Actionable Advice
+        add_section_heading(doc, "Recommendations")
+        doc.add_paragraph(
+            "1. Quantify Achievements: Where possible, use numbers to describe your impact (e.g., 'Increased efficiency by 20%' or 'Managed a budget of $50k').",
+            style='List Number'
+        )
+        doc.add_paragraph(
+            "2. Mirror Language: Use similar phrasing and terminology as the job description to pass through automated screening systems (ATS).",
+            style='List Number'
+        )
+        doc.add_paragraph(
+            "3. Review and Refine: Ensure your professional summary and recent experience directly address the top requirements listed in the job posting.",
+            style='List Number'
+        )
+
+        # --- Save Document ---
+        doc.save(output_path)
+        
+        return f"Resume analysis report successfully created at: {output_path}"
+
+    except Exception as e:
+        raise Exception(f"Error creating resume analysis report: {str(e)}")
+
 if __name__ == "__main__":
     try:
         print("Starting docx-creator MCP server...", file=sys.stderr)

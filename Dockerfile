@@ -19,7 +19,3 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
-
-EXPOSE 8000
-
-CMD ["streamlit", "run", "Clients/mcp_streamlit.py", "--server.port=8000", "--server.address=0.0.0.0"]
