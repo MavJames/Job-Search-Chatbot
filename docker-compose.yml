@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   backend:
     build:
@@ -8,15 +10,20 @@ services:
     volumes:
       - ./Clients/backend:/app/Clients/backend
       - ./Servers:/app/Servers
+      - ./uploads:/app/uploads
     environment:
-      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
       - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION}
       - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT}
       - AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=${AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT}
-      - FILESYSTEM_ROOT=/app/Resume-Builder
-    command: gunicorn --bind 0.0.0.0:5001 "Clients.backend.app:app"
+    command: uvicorn Clients.backend.main:app --host 0.0.0.0 --port 5001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   streamlit:
     build:
@@ -26,7 +33,9 @@ services:
       - "8501:8501"
     volumes:
       - ./Clients:/app/Clients
-      - ./Servers:/app/Servers
     environment:
       - BACKEND_URL=http://backend:5001
     command: streamlit run Clients/streamlit_ui.py
+    depends_on:
+      backend:
+        condition: service_healthy

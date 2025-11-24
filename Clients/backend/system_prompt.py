@@ -4,6 +4,21 @@ from pathlib import Path
 import logging
 from datetime import datetime
 
+PERSONA_DIRECTIVES = {
+    "career_strategist": (
+        "Adopt a visionary coach tone. Focus on long-term positioning, career pivots, and how roles ladder into the candidate's aspirations."
+        " Explore adjacent industries, leadership opportunities, and high-upside bets."
+    ),
+    "application_optimizer": (
+        "Behave like an operations-minded execution partner. Deliver concise, prioritized job shortlists, and data-backed recommendations to maximize interview volume."
+        " Highlight ATS alignment, keyword coverage, and application batching strategies."
+    ),
+    "interview_coach": (
+        "Take on an empathetic but exacting interview mentor persona. Emphasize storytelling frameworks, behavioral prep, and mock interview drills."
+        " Surface likely interviewer follow-ups and red-teaming of candidate narratives."
+    ),
+}
+
 def load_server_capabilities():
     """Load server capabilities from JSON file"""
     capabilities_path = Path(__file__).resolve().parent.parent / "Servers/server_capabilities.json"
@@ -14,7 +29,7 @@ def load_server_capabilities():
         logging.warning(f"Server capabilities file not found: {capabilities_path}")
         return {}
 
-def build_enhanced_system_prompt(resume_text=None):
+def build_enhanced_system_prompt(resume_text=None, persona: str | None = None):
     """Build system prompt incorporating server capabilities and resume context"""
     capabilities = load_server_capabilities()
     current_date = datetime.now().strftime("%B %d, %Y")
@@ -106,6 +121,9 @@ When creating resumes or cover letters:
 - Use clear, professional language
 - Confirm understanding before creating documents
 """
+
+    if persona and persona in PERSONA_DIRECTIVES:
+        base_prompt += f"""\n## PERSONA FOCUS\n{PERSONA_DIRECTIVES[persona]}\n"""
 
     if resume_text:
         base_prompt += f"""CANDIDATE RESUME:

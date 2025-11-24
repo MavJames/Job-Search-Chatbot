@@ -1,4 +1,20 @@
-# syntax=docker/dockerfile:1
+# Stage 1: Build stage with dependencies
+FROM python:3.11-slim as builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install build-time dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential
+
+# Copy and install Python requirements
+COPY requirements.txt ./
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+
+# Stage 2: Final production stage
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -7,15 +23,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt ./
+# Copy installed packages from builder stage
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache --no-index --find-links=/wheels /wheels/*
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && corepack enable \
-    && pip install --no-cache-dir -r requirements.txt \
-    && apt-get purge -y --auto-remove curl gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
+# Copy application code
 COPY . .
+
+# No EXPOSE or CMD here, handled by docker-compose

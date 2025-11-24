@@ -10,6 +10,11 @@ PyPDF2
 python-docx
 python-dotenv
 streamlit
-Flask
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
 gunicorn
 Werkzeug
+sseclient-py
+numpy

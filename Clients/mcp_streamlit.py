@@ -20,6 +20,107 @@ from datetime import datetime
 
 st.set_page_config(page_title="Job Search Assistant", layout="wide")
 
+THEME_CSS = """
+<style>
+.stApp {
+    background-color: #f5f7fb;
+}
+.block-container {
+    padding-top: 2.5rem;
+}
+.hero-card {
+    background: linear-gradient(120deg, #1f2937 0%, #2563eb 100%);
+    color: #ffffff;
+    padding: 1.5rem 1.75rem;
+    border-radius: 18px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.25);
+}
+.hero-title {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+}
+.hero-subtitle {
+    font-size: 0.95rem;
+    opacity: 0.92;
+    margin: 0;
+}
+.metric-row {
+    margin-bottom: 1.5rem;
+}
+.metric-card {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 1.1rem 1.2rem;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+}
+.metric-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    margin-bottom: 0.35rem;
+}
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #111827;
+}
+.metric-helper {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-top: 0.35rem;
+}
+.sidebar-section-title {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #64748b;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+.sidebar-badge {
+    background: #e0e7ff;
+    border-radius: 999px;
+    display: inline-block;
+    padding: 0.35rem 0.85rem;
+    margin-right: 0.35rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.85rem;
+    color: #1e1b4b;
+}
+.sidebar-footnote {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-bottom: 1rem;
+}
+[data-testid="stChatMessage"] {
+    margin-bottom: 1rem;
+}
+[data-testid="stChatMessageUser"] > div {
+    background: #1d4ed8;
+    color: #ffffff;
+    border-radius: 18px;
+    padding: 1rem;
+    box-shadow: 0 18px 40px rgba(37, 99, 235, 0.25);
+}
+[data-testid="stChatMessageAssistant"] > div {
+    background: #ffffff;
+    border-radius: 18px;
+    padding: 1rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+}
+.info-expander p {
+    margin-bottom: 0.25rem;
+}
+</style>
+"""
+
+st.markdown(THEME_CSS, unsafe_allow_html=True)
+
 #Configures the embedding model to convert text to vectors for semantic search in the memory system
 def get_embedding_index():
     """
@@ -301,6 +402,7 @@ def initialize_agent():
 
             all_tools = []
             sessions = {}
+            server_info = {}
 
             for server_name in servers.keys():
                 try:
@@ -310,9 +412,17 @@ def initialize_agent():
 
                     tools = await load_mcp_tools(session)
                     all_tools.extend(tools)
+                    server_info[server_name] = {
+                        "tools": len(tools),
+                        "status": "Connected"
+                    }
                     logging.info(f"Connected to server: {server_name}, loaded {len(tools)} tools")
                 except Exception as e:
                     logging.error(f"Failed to connect to server {server_name}: {e}")
+                    server_info[server_name] = {
+                        "tools": 0,
+                        "status": "Error"
+                    }
                     continue
 
             if not all_tools:
@@ -320,6 +430,13 @@ def initialize_agent():
 
             store, memory_tools = initialize_memory_system()
             all_tools.extend(memory_tools)
+
+            summary = {
+                "total_tools": len(all_tools),
+                "memory_tools": len(memory_tools),
+                "connected_servers": sum(1 for info in server_info.values() if info.get("status") == "Connected"),
+            }
+            metadata = {"servers": server_info, "summary": summary}
 
             llm = build_llm()
 
@@ -329,7 +446,7 @@ def initialize_agent():
                 store=store
             )
             logging.info(f"Agent initialized successfully with {len(all_tools)} tools and LangMem memory")
-            return agent, client, sessions, store
+            return agent, client, sessions, store, metadata
 
         except Exception as e:
             logging.error(f"Failed to initialize agent: {e}")
@@ -360,13 +477,15 @@ def run_agent_sync(messages, agent):
     return future.result(timeout=120)
 
 #Runs initialize agent with the streamlit spinner to show the process is running
-try:
-    with st.spinner("Initializing agent and connecting to job search servers..."):
-        agent, client, sessions, store = initialize_agent()
-except Exception as e:
-    st.error(f"Failed to initialize agent: {str(e)}")
-    st.error("Please check your configuration and environment variables.")
-    st.stop()
+with st.spinner("Initializing agent and connecting to job search servers..."):
+    try:
+        agent, client, sessions, store, runtime_metadata = initialize_agent()
+    except Exception as e:
+        st.error(f"Failed to initialize agent: {str(e)}")
+        st.error("Please check your configuration and environment variables.")
+        st.stop()
+
+st.session_state["ui_metrics"] = runtime_metadata or {"servers": {}, "summary": {}}
 
 # -----------------------------
 # Session state
@@ -378,8 +497,78 @@ if "resume_path" not in st.session_state:
 if "resume_text" not in st.session_state:
     st.session_state.resume_text = None
 
+ui_metrics = st.session_state.get("ui_metrics", {"servers": {}, "summary": {}})
+server_info = ui_metrics.get("servers", {})
+summary_info = ui_metrics.get("summary", {})
+
+assistant_turns = sum(1 for msg in st.session_state.chat_history if msg.get("role") == "assistant")
+total_messages = len(st.session_state.chat_history)
+resume_ready = bool(st.session_state.resume_path)
+
+hero_html = (
+    "<div class='hero-card'>"
+    "<div class='hero-title'>Job Search Copilot</div>"
+    "<p class='hero-subtitle'>Blend MCP tooling, personalized memory, and GPT intelligence to move from discovery to tailored applications in minutes.</p>"
+    "</div>"
+)
+st.markdown(hero_html, unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns(3)
+col1.markdown(
+    f"<div class='metric-card'><div class='metric-label'>Assistant replies</div>"
+    f"<div class='metric-value'>{assistant_turns}</div>"
+    f"<div class='metric-helper'>Across {total_messages} total messages</div></div>",
+    unsafe_allow_html=True,
+)
+connected_servers = summary_info.get("connected_servers", sum(1 for info in server_info.values() if info.get("status") == "Connected"))
+total_tools = summary_info.get("total_tools", 0)
+col2.markdown(
+    f"<div class='metric-card'><div class='metric-label'>Active tooling</div>"
+    f"<div class='metric-value'>{connected_servers}</div>"
+    f"<div class='metric-helper'>{total_tools} tools available</div></div>",
+    unsafe_allow_html=True,
+)
+resume_status = "Ready" if resume_ready else "Pending"
+resume_helper = "Resume context synced" if resume_ready else "Upload to unlock tailoring"
+col3.markdown(
+    f"<div class='metric-card'><div class='metric-label'>Resume status</div>"
+    f"<div class='metric-value'>{resume_status}</div>"
+    f"<div class='metric-helper'>{resume_helper}</div></div>",
+    unsafe_allow_html=True,
+)
+
+with st.expander("Assistant playbook", expanded=False):
+    st.markdown(
+        "- Start with your target role, locations, or companies so the agent can focus the search.\n"
+        "- Ask for salary insights or top companies to prioritize opportunities quickly.\n"
+        "- When you find a posting you like, request a tailored resume or cover letter and download the generated DOCX.\n"
+        "- Re-upload a revised resume any time to refresh the assistant's memory context.")
+
 #Resume uploader for pdf or docx file formats and generates a uuid to avoid filename conflicts, remembers for entire session
 with st.sidebar:
+    sidebar_metrics = st.session_state.get("ui_metrics", {"servers": {}, "summary": {}})
+    sidebar_servers = sidebar_metrics.get("servers", {})
+    sidebar_summary = sidebar_metrics.get("summary", {})
+
+    st.markdown("<div class='sidebar-section-title'>Session status</div>", unsafe_allow_html=True)
+    if sidebar_servers:
+        for name, info in sidebar_servers.items():
+            status_label = info.get("status", "Unknown")
+            tools_label = info.get("tools", 0)
+            badge_text = f"{name} · {status_label.lower()}"
+            if tools_label:
+                badge_text += f" · {tools_label} tools"
+            st.markdown(f"<div class='sidebar-badge'>{badge_text}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='sidebar-badge'>No MCP servers detected</div>", unsafe_allow_html=True)
+
+    if sidebar_summary:
+        st.markdown(
+            f"<div class='sidebar-footnote'>Total tools: {sidebar_summary.get('total_tools', 0)} · Memory tools: {sidebar_summary.get('memory_tools', 0)}</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
     st.header("Upload Resume")
     uploaded_resume = st.file_uploader("Choose your resume", type=["pdf", "docx", "doc"])
 
@@ -401,6 +590,13 @@ with st.sidebar:
             st.error("Could not extract text from resume")
             st.session_state.resume_path = None
             st.session_state.resume_text = None
+
+    if st.session_state.resume_text:
+        with st.expander("Resume snapshot", expanded=False):
+            preview = st.session_state.resume_text[:500]
+            if len(st.session_state.resume_text) > 500:
+                preview += " ..."
+            st.write(preview)
 
 
 # Build system prompt with resume context
