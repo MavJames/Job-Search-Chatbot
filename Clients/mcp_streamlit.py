@@ -380,6 +380,7 @@ if "resume_text" not in st.session_state:
 
 #Resume uploader for pdf or docx file formats and generates a uuid to avoid filename conflicts, remembers for entire session
 with st.sidebar:
+    st.image("/Users/carly.watkins/Desktop/Job-Search-Chatbot/Desktop/uncw_logo.png", width='stretch')
     st.header("Upload Resume")
     uploaded_resume = st.file_uploader("Choose your resume", type=["pdf", "docx", "doc"])
 
