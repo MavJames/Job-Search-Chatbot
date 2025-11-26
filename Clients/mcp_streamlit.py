@@ -6,8 +6,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 import logging
+import re
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.store.memory import InMemoryStore
 from langmem import create_manage_memory_tool, create_search_memory_tool
@@ -82,6 +83,82 @@ def extract_resume_text(file_path):
         return extract_text_from_docx(file_path)
     else:
         return None
+
+def find_generated_docx_paths(text):
+    """Locate docx file paths mentioned in agent output and verify they exist."""
+    if not text:
+        return []
+
+    matches = DOCX_PATH_PATTERN.findall(text)
+    discovered_paths = []
+
+    for raw_match in matches:
+        cleaned = raw_match.strip().strip("\"'.,)")
+        cleaned = cleaned.replace("\\", os.sep)
+        candidate = Path(cleaned).expanduser()
+
+        candidate_options = [candidate]
+        if not candidate.is_absolute():
+            candidate_options = [
+                (BASE_DIR / candidate).resolve(),
+                (Path.cwd() / candidate).resolve(),
+            ]
+
+        for option in candidate_options:
+            if option.exists():
+                discovered_paths.append(option)
+                break
+
+    return discovered_paths
+
+
+def register_generated_files_from_text(text):
+    """Store any newly created docx files so the user can download them."""
+    if "generated_files" not in st.session_state:
+        return
+
+    for path in find_generated_docx_paths(text):
+        path_str = str(path)
+        if path_str not in st.session_state.generated_files:
+            st.session_state.generated_files.append(path_str)
+
+
+def render_generated_files_section():
+    """Render download buttons for any generated documents."""
+    files = st.session_state.get("generated_files") or []
+    if not files:
+        return
+
+    st.subheader("Generated Documents")
+
+    if st.button("Clear generated documents", key="clear-generated-files"):
+        st.session_state.generated_files = []
+        return
+
+    stale_paths = []
+    for idx, path_str in enumerate(files):
+        path = Path(path_str)
+        if not path.exists():
+            st.info(f"File no longer available: {path_str}")
+            stale_paths.append(path_str)
+            continue
+
+        try:
+            file_bytes = path.read_bytes()
+        except Exception as err:
+            st.warning(f"Unable to read {path.name}: {err}")
+            continue
+
+        st.download_button(
+            label=f"Download {path.name}",
+            data=file_bytes,
+            file_name=path.name,
+            mime=DOCX_MIME_TYPE,
+            key=f"download-{path.name}-{idx}"
+        )
+
+    if stale_paths:
+        st.session_state.generated_files = [p for p in files if p not in stale_paths]
 
 #Builds system prompt with the extrected text from the attached resume, NEEDS TO BE OPTIMIZED
 def load_server_capabilities():
@@ -203,7 +280,11 @@ When creating resumes or cover letters:
 #Logging to track flow, loading env, getting json file of servers, and titling the streamlit app
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
-CONFIG_PATH = Path(__file__).resolve().parent / "../Servers/servers_config.json"
+BASE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / "../Servers/servers_config.json"
+LOGO_PATH = (BASE_DIR / "../uncw_logo.png").resolve()
+DOCX_PATH_PATTERN = re.compile(r"([^\s\"'<>]+\.docx)", re.IGNORECASE)
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 st.title("Job Search Assistant")
 
 #Keep last N turns (turn = user+assistant)
@@ -280,7 +361,29 @@ def initialize_agent():
             with open(CONFIG_PATH) as f:
                 config = json.load(f)
 
-            filesystem_cfg = config.get("mcpServers", {}).get("filesystem", {})
+            servers = config.get("mcpServers", config.get("servers", {}))
+            if not servers:
+                raise ValueError("No servers found in configuration")
+
+            config_dir = CONFIG_PATH.resolve().parent
+            for server_name, server_cfg in servers.items():
+                args = server_cfg.get("args")
+                if not args:
+                    continue
+
+                resolved_args = []
+                for arg in args:
+                    if isinstance(arg, str):
+                        candidate = Path(arg)
+                        if not candidate.is_absolute():
+                            candidate_from_config = (config_dir / candidate).resolve()
+                            if candidate_from_config.exists():
+                                arg = str(candidate_from_config)
+                    resolved_args.append(arg)
+
+                server_cfg["args"] = resolved_args
+
+            filesystem_cfg = servers.get("filesystem", {})
             fs_args = filesystem_cfg.get("args") if filesystem_cfg else None
             if fs_args:
                 env_root = os.getenv("FILESYSTEM_ROOT")
@@ -289,13 +392,9 @@ def initialize_agent():
                 else:
                     candidate = Path(fs_args[-1])
                     if not candidate.is_absolute():
-                        candidate = (CONFIG_PATH.resolve().parent / candidate).resolve()
+                        candidate = (config_dir / candidate).resolve()
                     fs_root = candidate
                 fs_args[-1] = str(fs_root)
-
-            servers = config.get("mcpServers", config.get("servers", {}))
-            if not servers:
-                raise ValueError("No servers found in configuration")
 
             client = MultiServerMCPClient(servers)
 
@@ -323,7 +422,7 @@ def initialize_agent():
 
             llm = build_llm()
 
-            agent = create_react_agent(
+            agent = create_agent(
                 llm,
                 all_tools,
                 store=store
@@ -377,10 +476,15 @@ if "resume_path" not in st.session_state:
     st.session_state.resume_path = None
 if "resume_text" not in st.session_state:
     st.session_state.resume_text = None
+if "generated_files" not in st.session_state:
+    st.session_state.generated_files = []
 
 #Resume uploader for pdf or docx file formats and generates a uuid to avoid filename conflicts, remembers for entire session
 with st.sidebar:
-    st.image("/Users/carly.watkins/Desktop/Job-Search-Chatbot/Desktop/uncw_logo.png", width='stretch')
+    if LOGO_PATH.exists():
+        st.image(str(LOGO_PATH), width='stretch')
+    else:
+        logging.warning("Logo image not found at %s", LOGO_PATH)
     st.header("Upload Resume")
     uploaded_resume = st.file_uploader("Choose your resume", type=["pdf", "docx", "doc"])
 
@@ -428,6 +532,7 @@ if user_input:
             messages = [{"role": "system", "content": system_prompt}] + window
             reply = run_agent_sync(messages, agent)
             st.session_state.chat_history.append({"role": "assistant", "content": reply})
+            register_generated_files_from_text(reply)
         except Exception as e:
             err = f"Error: {str(e)}"
             st.session_state.chat_history.append({"role": "assistant", "content": err})
@@ -436,3 +541,5 @@ if user_input:
 for msg in st.session_state.chat_history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+
+render_generated_files_section()

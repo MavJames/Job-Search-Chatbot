@@ -9,4 +9,7 @@ pandas
 PyPDF2
 python-docx
 python-dotenv
+python-jobspy
 streamlit
+slack-sdk
+slack-bolt

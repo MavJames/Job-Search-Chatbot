@@ -1,3 +1,11 @@
 # Environment files
 .env
 .env.*
+*.docx
+*.pdf
+*.txt
+
+# cache and generated files
+__pycache__/
+*.log
+generated_.*

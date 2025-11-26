@@ -4,6 +4,8 @@ MCP Server for creating properly formatted Word documents (.docx)
 
 import sys
 import traceback
+from typing import Iterable, List, Optional, Union
+
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -22,11 +24,47 @@ def add_section_heading(doc: Document, text: str):
     heading.paragraph_format.space_before = Pt(6)
     heading.paragraph_format.space_after = Pt(4)
 
+def _normalize_contact_entries(contact: Union[dict, Iterable[str], str, None]) -> List[str]:
+    """Convert various contact formats into a list of string entries."""
+    if not contact:
+        return []
+
+    entries: List[str] = []
+
+    if isinstance(contact, dict):
+        ordered_keys = ["email", "phone", "location", "linkedin", "address"]
+        seen = set()
+        for key in ordered_keys:
+            value = contact.get(key)
+            if value:
+                normalized = str(value).strip()
+                if normalized and normalized not in seen:
+                    entries.append(normalized)
+                    seen.add(normalized)
+
+        for key, value in contact.items():
+            normalized = str(value).strip()
+            if normalized and normalized not in entries:
+                entries.append(normalized)
+
+        return entries
+
+    if isinstance(contact, str):
+        contact = contact.replace("\n", " | ")
+        return [part.strip() for part in contact.split("|") if part.strip()]
+
+    if isinstance(contact, Iterable):
+        return [str(item).strip() for item in contact if str(item).strip()]
+
+    normalized = str(contact).strip()
+    return [normalized] if normalized else []
+
+
 @mcp.tool()
 def create_resume(
     output_path: str,
     name: str,
-    contact: dict = None,
+    contact: Union[dict, Iterable[str], str, None] = None,
     summary: str = None,
     experience: list = None,
     education: list = None,
@@ -67,22 +105,12 @@ def create_resume(
         name_para.paragraph_format.space_after = Pt(2)
         
         # Contact info (centered, compact)
-        if contact:
-            contact_parts = []
-            if 'email' in contact:
-                contact_parts.append(contact['email'])
-            if 'phone' in contact:
-                contact_parts.append(contact['phone'])
-            if 'location' in contact:
-                contact_parts.append(contact['location'])
-            if 'linkedin' in contact:
-                contact_parts.append(contact['linkedin'])
-            
-            if contact_parts:
-                contact_para = doc.add_paragraph(' | '.join(contact_parts))
-                contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                contact_para.runs[0].font.size = Pt(9)
-                contact_para.paragraph_format.space_after = Pt(6)
+        contact_parts = _normalize_contact_entries(contact)
+        if contact_parts:
+            contact_para = doc.add_paragraph(' | '.join(contact_parts))
+            contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            contact_para.runs[0].font.size = Pt(9)
+            contact_para.paragraph_format.space_after = Pt(6)
         
         # Summary
         if summary:
@@ -162,7 +190,7 @@ def create_cover_letter(
     output_path: str,
     name: str,
     body_paragraphs: list,
-    contact: dict = None,
+    contact: Union[dict, Iterable[str], str, None] = None,
     date: str = None,
     recipient: dict = None
 ) -> str:
@@ -197,19 +225,12 @@ def create_cover_letter(
         name_para.runs[0].font.bold = True
         name_para.paragraph_format.space_after = Pt(0)
         
-        if contact:
-            if 'address' in contact:
-                addr_para = doc.add_paragraph(contact['address'])
-                addr_para.runs[0].font.size = Pt(11)
-                addr_para.paragraph_format.space_after = Pt(0)
-            if 'phone' in contact:
-                phone_para = doc.add_paragraph(contact['phone'])
-                phone_para.runs[0].font.size = Pt(11)
-                phone_para.paragraph_format.space_after = Pt(0)
-            if 'email' in contact:
-                email_para = doc.add_paragraph(contact['email'])
-                email_para.runs[0].font.size = Pt(11)
-                email_para.paragraph_format.space_after = Pt(12)
+        contact_lines = _normalize_contact_entries(contact)
+        if contact_lines:
+            for idx, line in enumerate(contact_lines):
+                contact_para = doc.add_paragraph(line)
+                contact_para.runs[0].font.size = Pt(11)
+                contact_para.paragraph_format.space_after = Pt(0 if idx < len(contact_lines) - 1 else 12)
         
         # Date
         if date:
