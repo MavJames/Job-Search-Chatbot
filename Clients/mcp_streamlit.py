@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import os
 import logging
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.store.memory import InMemoryStore
 from langmem import create_manage_memory_tool, create_search_memory_tool
@@ -17,6 +17,8 @@ import uuid
 import PyPDF2
 import docx
 from datetime import datetime
+import base64
+import re
 
 st.set_page_config(page_title="Job Search Assistant", layout="wide")
 
@@ -158,6 +160,16 @@ When creating resumes or cover letters:
 - Format: Create as .docx (Microsoft Word format) using create_resume tool
 - Keep to ONE page unless explicitly requested otherwise
 
+**IMPORTANT: When calling create_resume, the contact parameter MUST be a dictionary:**
+```
+contact = {{
+    "email": "candidate@email.com",
+    "phone": "(555) 123-4567",
+    "location": "City, State",
+    "linkedin": "linkedin.com/in/profile"  # optional
+}}
+```
+
 **COVER LETTERS:**
 - Address specific job requirements and company
 - Tell the story of WHY they're pursuing this role
@@ -167,6 +179,22 @@ When creating resumes or cover letters:
 - 3-4 substantial paragraphs
 - Professional, enthusiastic tone
 - Format: Create as .docx using create_cover_letter tool
+
+**IMPORTANT: When calling create_cover_letter, these parameters MUST be dictionaries:**
+```
+contact = {{
+    "email": "candidate@email.com",
+    "phone": "(555) 123-4567",
+    "address": "123 Street, City, State ZIP"
+}}
+
+recipient = {{
+    "name": "Hiring Manager Name",  # or "Hiring Manager" if unknown
+    "title": "Title",  # optional
+    "company": "Company Name",
+    "address": "Company Address"  # optional
+}}
+```
 
 ## KEY PRINCIPLES
 
@@ -297,6 +325,27 @@ def initialize_agent():
             if not servers:
                 raise ValueError("No servers found in configuration")
 
+            # Resolve relative paths in server configs and use current Python interpreter
+            config_dir = CONFIG_PATH.parent
+            import sys
+            python_executable = sys.executable
+            
+            for server_name, server_config in servers.items():
+                # Use the same Python interpreter that's running this script
+                if server_config.get("command") == "python3":
+                    server_config["command"] = python_executable
+                
+                if "args" in server_config:
+                    resolved_args = []
+                    for arg in server_config["args"]:
+                        # Convert relative paths to absolute
+                        if arg.endswith(".py") and not Path(arg).is_absolute():
+                            resolved_path = (config_dir / arg).resolve()
+                            resolved_args.append(str(resolved_path))
+                        else:
+                            resolved_args.append(arg)
+                    server_config["args"] = resolved_args
+
             client = MultiServerMCPClient(servers)
 
             all_tools = []
@@ -323,7 +372,7 @@ def initialize_agent():
 
             llm = build_llm()
 
-            agent = create_react_agent(
+            agent = create_agent(
                 llm,
                 all_tools,
                 store=store
@@ -377,10 +426,45 @@ if "resume_path" not in st.session_state:
     st.session_state.resume_path = None
 if "resume_text" not in st.session_state:
     st.session_state.resume_text = None
+if "generated_documents" not in st.session_state:
+    st.session_state.generated_documents = []
+if "save_folder" not in st.session_state:
+    st.session_state.save_folder = str(Path.home() / "Desktop")
+
+def extract_document_from_response(response_content: str):
+    """Extract base64 document data from agent response if present"""
+    try:
+        # Look for JSON-like structures containing filename and content
+        import ast
+        if "filename" in response_content and "content" in response_content:
+            # Try to find and extract the dictionary
+            start_idx = response_content.find("{")
+            end_idx = response_content.rfind("}") + 1
+            if start_idx != -1 and end_idx > start_idx:
+                dict_str = response_content[start_idx:end_idx]
+                try:
+                    # Try JSON first
+                    doc_data = json.loads(dict_str)
+                    if "filename" in doc_data and "content" in doc_data:
+                        return doc_data
+                except:
+                    # Try to find base64 content with regex if JSON fails
+                    filename_match = re.search(r'"filename":\s*"([^"]+)"', response_content)
+                    content_match = re.search(r'"content":\s*"([^"]+)"', response_content)
+                    if filename_match and content_match:
+                        return {
+                            "filename": filename_match.group(1),
+                            "content": content_match.group(1)
+                        }
+    except Exception as e:
+        logging.error(f"Error extracting document: {e}")
+    return None
 
 #Resume uploader for pdf or docx file formats and generates a uuid to avoid filename conflicts, remembers for entire session
 with st.sidebar:
-    st.image("/Users/carly.watkins/Desktop/Job-Search-Chatbot/Desktop/uncw_logo.png", width='stretch')
+    logo_path = Path(__file__).parent.parent / "uncw_logo.png"
+    if logo_path.exists():
+        st.image(str(logo_path), width='stretch')
     st.header("Upload Resume")
     uploaded_resume = st.file_uploader("Choose your resume", type=["pdf", "docx", "doc"])
 
@@ -402,6 +486,24 @@ with st.sidebar:
             st.error("Could not extract text from resume")
             st.session_state.resume_path = None
             st.session_state.resume_text = None
+    
+    st.divider()
+    st.header("📁 Save Location")
+    save_folder_input = st.text_input(
+        "Save documents to folder:",
+        value=st.session_state.save_folder,
+        help="Enter the full path to the folder where documents should be saved"
+    )
+    if save_folder_input != st.session_state.save_folder:
+        # Validate the path
+        folder_path = Path(save_folder_input).expanduser()
+        if folder_path.exists() and folder_path.is_dir():
+            st.session_state.save_folder = str(folder_path)
+            st.success(f"✅ Save location updated")
+        else:
+            st.error(f"❌ Invalid folder path")
+    
+    st.caption(f"Current: {st.session_state.save_folder}")
 
 
 # Build system prompt with resume context
@@ -427,7 +529,35 @@ if user_input:
             system_prompt = get_current_system_prompt()
             messages = [{"role": "system", "content": system_prompt}] + window
             reply = run_agent_sync(messages, agent)
-            st.session_state.chat_history.append({"role": "assistant", "content": reply})
+            
+            # Check if the response contains a document
+            doc_data = extract_document_from_response(reply)
+            if doc_data:
+                # Store the document for download
+                st.session_state.generated_documents.append(doc_data)
+                
+                # Auto-save to specified folder
+                try:
+                    save_path = Path(st.session_state.save_folder) / doc_data['filename']
+                    doc_bytes = base64.b64decode(doc_data["content"])
+                    with open(save_path, 'wb') as f:
+                        f.write(doc_bytes)
+                    save_message = f"✅ I've created and saved your document: **{doc_data['filename']}** to `{save_path}`"
+                except Exception as save_error:
+                    logging.error(f"Error saving document: {save_error}")
+                    save_message = f"✅ I've created your document: **{doc_data['filename']}**. You can download it using the button below. (Auto-save failed: {str(save_error)})"
+                
+                # Clean up the reply to remove the raw data
+                clean_reply = re.sub(r'\{[^}]*"filename"[^}]*"content"[^}]*\}', '', reply)
+                if clean_reply.strip():
+                    st.session_state.chat_history.append({"role": "assistant", "content": clean_reply + "\n\n" + save_message})
+                else:
+                    st.session_state.chat_history.append({
+                        "role": "assistant", 
+                        "content": save_message
+                    })
+            else:
+                st.session_state.chat_history.append({"role": "assistant", "content": reply})
         except Exception as e:
             err = f"Error: {str(e)}"
             st.session_state.chat_history.append({"role": "assistant", "content": err})
@@ -436,3 +566,23 @@ if user_input:
 for msg in st.session_state.chat_history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+
+# Display download buttons for generated documents
+if st.session_state.generated_documents:
+    st.divider()
+    st.subheader("📄 Generated Documents")
+    for i, doc_data in enumerate(st.session_state.generated_documents):
+        try:
+            # Decode base64 content
+            doc_bytes = base64.b64decode(doc_data["content"])
+            
+            # Create download button
+            st.download_button(
+                label=f"⬇️ Download {doc_data['filename']}",
+                data=doc_bytes,
+                file_name=doc_data["filename"],
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key=f"download_{i}_{doc_data['filename']}"
+            )
+        except Exception as e:
+            st.error(f"Error preparing download for {doc_data['filename']}: {str(e)}")

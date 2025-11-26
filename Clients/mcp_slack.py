@@ -14,6 +14,8 @@ from typing import Dict, Optional, List
 import uuid
 import io
 import tempfile
+import base64
+import re
 
 # Slack stuff
 from slack_bolt import App
@@ -23,7 +25,7 @@ from slack_sdk.errors import SlackApiError
 # LLM and agent setup
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.store.memory import InMemoryStore
 from langmem import create_manage_memory_tool, create_search_memory_tool
@@ -33,6 +35,8 @@ import PyPDF2
 import docx
 from dotenv import load_dotenv
 import threading
+import requests
+import time
 
 # ============================================================================
 # Basic setup
@@ -43,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-CONFIG_PATH = Path(__file__).resolve().parent / "../Servers/servers_config.json"
+CONFIG_PATH = Path(__file__).resolve().parent / "../Servers/servers_config_slack.json"
 CAPABILITIES_PATH = Path(__file__).resolve().parent / "../Servers/server_capabilities.json"
 
 # Only keep the last few messages in context to avoid token limits
@@ -60,6 +64,7 @@ class LocalSessionManager:
         # Just store everything in memory
         self.chat_histories = {}  # user_id -> list of messages
         self.user_resumes = {}    # user_id -> {resume_text, resume_path}
+        self.pending_documents = {}  # user_id -> document data
         self.temp_dir = Path(tempfile.gettempdir()) / "job_bot_resumes"
         self.temp_dir.mkdir(exist_ok=True)
     
@@ -100,6 +105,18 @@ class LocalSessionManager:
             f.write(file_content)
         
         return str(file_path)
+    
+    def store_document(self, user_id: str, filename: str, content_base64: str):
+        """Store a base64 document for a user to be uploaded to Slack"""
+        self.pending_documents[user_id] = {
+            'filename': filename,
+            'content': content_base64,
+            'timestamp': time.time()
+        }
+    
+    def get_pending_document(self, user_id: str) -> Optional[Dict]:
+        """Retrieve and clear any pending document for a user"""
+        return self.pending_documents.pop(user_id, None)
 
 # ============================================================================
 # Resume text extraction - same logic as the Streamlit version
@@ -164,8 +181,14 @@ def build_enhanced_system_prompt(resume_text: Optional[str] = None) -> str:
     capabilities = load_server_capabilities()
     current_date = datetime.now().strftime("%B %d, %Y")
 
-    base_prompt = f"""You are a Job Search Assistant helping candidates find opportunities and navigate applications. When asked to create a resume
-    return a docx file that is in Microsoft Word format. Today is {current_date}.
+    base_prompt = f"""You are a Job Search Assistant helping candidates find opportunities and navigate applications. 
+    
+When asked to create a resume or cover letter, use the appropriate tool which will return a dictionary with:
+- filename: The name of the document
+- content: Base64 encoded document content
+- message: Success message
+
+The documents are returned as base64 encoded strings and will be automatically uploaded to Slack. Today is {current_date}.
 
 
     ## YOUR ROLE & PHILOSOPHY
@@ -223,6 +246,16 @@ When creating resumes or cover letters:
 - Format: Create as .docx (Microsoft Word format) using create_resume tool
 - Keep to ONE page unless explicitly requested otherwise
 
+**IMPORTANT: When calling create_resume, the contact parameter MUST be a dictionary:**
+```
+contact = {{
+    "email": "candidate@email.com",
+    "phone": "(555) 123-4567",
+    "location": "City, State",
+    "linkedin": "linkedin.com/in/profile"  # optional
+}}
+```
+
 **COVER LETTERS:**
 - Address specific job requirements and company
 - Tell the story of WHY they're pursuing this role
@@ -232,6 +265,22 @@ When creating resumes or cover letters:
 - 3-4 substantial paragraphs
 - Professional, enthusiastic tone
 - Format: Create as .docx using create_cover_letter tool
+
+**IMPORTANT: When calling create_cover_letter, these parameters MUST be dictionaries:**
+```
+contact = {{
+    "email": "candidate@email.com",
+    "phone": "(555) 123-4567",
+    "address": "123 Street, City, State ZIP"
+}}
+
+recipient = {{
+    "name": "Hiring Manager Name",  # or "Hiring Manager" if unknown
+    "title": "Title",  # optional
+    "company": "Company Name",
+    "address": "Company Address"  # optional
+}}
+```
 
 ## KEY PRINCIPLES
 
@@ -371,23 +420,30 @@ def initialize_agent(loop):
             with open(CONFIG_PATH) as f:
                 config = json.load(f)
 
-            # Handle filesystem root path if it's configured
-            filesystem_cfg = config.get("mcpServers", {}).get("filesystem", {})
-            fs_args = filesystem_cfg.get("args") if filesystem_cfg else None
-            if fs_args:
-                env_root = os.getenv("FILESYSTEM_ROOT")
-                if env_root:
-                    fs_root = Path(env_root).expanduser().resolve()
-                else:
-                    candidate = Path(fs_args[-1])
-                    if not candidate.is_absolute():
-                        candidate = (CONFIG_PATH.resolve().parent / candidate).resolve()
-                    fs_root = candidate
-                fs_args[-1] = str(fs_root)
-
             servers = config.get("mcpServers", config.get("servers", {}))
             if not servers:
                 raise ValueError("No servers found in configuration")
+
+            # Resolve relative paths in server configs and use current Python interpreter
+            config_dir = CONFIG_PATH.parent
+            import sys
+            python_executable = sys.executable
+            
+            for server_name, server_config in servers.items():
+                # Use the same Python interpreter that's running this script
+                if server_config.get("command") == "python3":
+                    server_config["command"] = python_executable
+                
+                if "args" in server_config:
+                    resolved_args = []
+                    for arg in server_config["args"]:
+                        # Convert relative paths to absolute
+                        if arg.endswith(".py") and not Path(arg).is_absolute():
+                            resolved_path = (config_dir / arg).resolve()
+                            resolved_args.append(str(resolved_path))
+                        else:
+                            resolved_args.append(arg)
+                    server_config["args"] = resolved_args
 
             # Connect to all the MCP servers
             client = MultiServerMCPClient(servers)
@@ -419,7 +475,7 @@ def initialize_agent(loop):
             llm = build_llm()
 
             # Create the actual agent
-            agent = create_react_agent(
+            agent = create_agent(
                 llm,
                 all_tools,
                 store=store
@@ -445,13 +501,58 @@ def run_agent_sync(messages, agent, loop, thread_id: str):
                     "configurable": {"thread_id": thread_id},
                 },
             )
-            return result["messages"][-1].content if result.get("messages") else "No reply."
+            return result
         except Exception as e:
             logging.exception("Agent error")
-            return f"Error: {str(e)}"
+            return {"messages": [type('obj', (object,), {"content": f"Error: {str(e)}"})()]}
 
     future = asyncio.run_coroutine_threadsafe(_run_agent(), loop)
     return future.result(timeout=120)
+
+def extract_document_from_response(response_content: str) -> Optional[Dict]:
+    """Extract base64 document data from agent response if present"""
+    try:
+        # Look for dictionary patterns in the response
+        import ast
+        # Try to find dict-like structures in the response
+        if "filename" in response_content and "content" in response_content:
+            # Try to extract JSON/dict from the response
+            start_idx = response_content.find("{")
+            end_idx = response_content.rfind("}") + 1
+            if start_idx != -1 and end_idx > start_idx:
+                dict_str = response_content[start_idx:end_idx]
+                try:
+                    doc_data = json.loads(dict_str)
+                    if "filename" in doc_data and "content" in doc_data:
+                        return doc_data
+                except:
+                    pass
+    except:
+        pass
+    return None
+
+def upload_document_to_slack(filename: str, content_base64: str, channel: str, title: str, client):
+    """Upload a base64 encoded document to Slack"""
+    try:
+        # Decode base64 content
+        doc_bytes = base64.b64decode(content_base64)
+        
+        # Create in-memory file
+        file_obj = io.BytesIO(doc_bytes)
+        file_obj.name = filename
+        
+        response = client.files_upload_v2(
+            channel=channel,
+            file=file_obj,
+            title=title,
+            filename=filename,
+            initial_comment=f"📄 Here's your {title}!"
+        )
+        logger.info(f"Successfully uploaded {filename} to Slack")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to upload document to Slack: {e}")
+        return False
 
 # ============================================================================
 # Start everything up
@@ -498,9 +599,9 @@ def handle_message(event, say, client):
     text = text.replace(f"<@{client.auth_test()['user_id']}>", "").strip()
     
     # Process the message
-    process_user_input(user_id, text, say)
+    process_user_input(user_id, text, say, channel, client)
 
-def process_user_input(user_id: str, user_input: str, say):
+def process_user_input(user_id: str, user_input: str, say, channel: str = None, client = None):
     """Handle a user's message and get a response from the agent"""
     # Save the user's message
     session_manager.add_to_chat_history(user_id, "user", user_input)
@@ -512,6 +613,11 @@ def process_user_input(user_id: str, user_input: str, say):
     window_size = max(2 * WINDOW_TURNS, 2)
     window = msgs[-window_size:]
     
+    # Check if this is a document generation request
+    is_doc_request = any(keyword in user_input.lower() for keyword in 
+                         ['create resume', 'generate resume', 'make resume', 
+                          'create cover letter', 'generate cover letter', 'make cover letter'])
+    
     # Let them know we're working on it
     say("Processing... :hourglass_flowing_sand:")
     
@@ -522,16 +628,55 @@ def process_user_input(user_id: str, user_input: str, say):
         
         # Build the full prompt with their resume context
         system_prompt = build_enhanced_system_prompt(resume_text)
+        
         messages = [{"role": "system", "content": system_prompt}] + window
         
         # Run the agent
-        reply = run_agent_sync(messages, agent, event_loop, thread_id=user_id)
+        result = run_agent_sync(messages, agent, event_loop, thread_id=user_id)
+        
+        # Extract the reply and check for documents
+        reply = result["messages"][-1].content if result.get("messages") else "No reply."
+        
+        # Check if response contains a document
+        doc_data = None
+        if is_doc_request:
+            # Look through all tool calls/responses in the result
+            for msg in result.get("messages", []):
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    # This is a tool call message
+                    continue
+                if hasattr(msg, 'content'):
+                    content = msg.content
+                    if isinstance(content, str):
+                        doc_data = extract_document_from_response(content)
+                        if doc_data:
+                            break
+                    elif isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict) and 'filename' in item and 'content' in item:
+                                doc_data = item
+                                break
         
         # Save the response
         session_manager.add_to_chat_history(user_id, "assistant", reply)
         
-        # Send it back to them
+        # Send text reply
         say(reply)
+        
+        # Upload document if found
+        if doc_data and channel and client:
+            filename = doc_data.get('filename', 'document.docx')
+            content_base64 = doc_data.get('content', '')
+            
+            # Determine document type
+            if 'resume' in filename.lower():
+                title = "Resume"
+            elif 'cover' in filename.lower():
+                title = "Cover Letter"
+            else:
+                title = "Document"
+            
+            upload_document_to_slack(filename, content_base64, channel, title, client)
         
     except Exception as e:
         err = f"Error: {str(e)}"

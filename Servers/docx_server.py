@@ -1,9 +1,12 @@
 """
 MCP Server for creating properly formatted Word documents (.docx)
+Returns documents as base64 encoded strings for Slack integration
 """
 
 import sys
 import traceback
+import base64
+import io
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -24,20 +27,21 @@ def add_section_heading(doc: Document, text: str):
 
 @mcp.tool()
 def create_resume(
-    output_path: str,
     name: str,
+    filename: str = "resume.docx",
     contact: dict = None,
     summary: str = None,
     experience: list = None,
     education: list = None,
     skills: list = None
-) -> str:
+) -> dict:
     """
     Create a professionally formatted resume in .docx format (optimized for one page)
+    Returns the document as base64 encoded string for delivery via Slack
     
     Args:
-        output_path: Full path where the .docx file should be saved
         name: Candidate's full name
+        filename: Name for the document file
         contact: Contact information (email, phone, location, linkedin)
         summary: Professional summary or objective
         experience: List of work experience entries with title, company, location, dates, responsibilities
@@ -45,7 +49,7 @@ def create_resume(
         skills: List of skills
     
     Returns:
-        Success message with file path
+        Dictionary with filename and base64 encoded document content
     """
     try:
         doc = Document()
@@ -149,36 +153,46 @@ def create_resume(
             for run in skills_para.runs:
                 run.font.size = Pt(10)
         
-        # Save document
-        doc.save(output_path)
+        # Save document to memory buffer
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
         
-        return f"Resume successfully created at: {output_path}"
+        # Encode as base64
+        doc_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        return {
+            "filename": filename,
+            "content": doc_base64,
+            "message": f"Resume successfully created: {filename}"
+        }
         
     except Exception as e:
         raise Exception(f"Error creating resume: {str(e)}")
 
 @mcp.tool()
 def create_cover_letter(
-    output_path: str,
     name: str,
     body_paragraphs: list,
+    filename: str = "cover_letter.docx",
     contact: dict = None,
     date: str = None,
     recipient: dict = None
-) -> str:
+) -> dict:
     """
     Create a professionally formatted cover letter in .docx format (optimized for one page)
+    Returns the document as base64 encoded string for delivery via Slack
     
     Args:
-        output_path: Full path where the .docx file should be saved
         name: Applicant's full name
         body_paragraphs: List of paragraphs for the cover letter body
+        filename: Name for the document file
         contact: Contact information (email, phone, address)
         date: Date of letter
         recipient: Recipient information (name, title, company, address)
     
     Returns:
-        Success message with file path
+        Dictionary with filename and base64 encoded document content
     """
     try:
         doc = Document()
@@ -256,30 +270,40 @@ def create_cover_letter(
         signature_para = doc.add_paragraph(name)
         signature_para.runs[0].font.size = Pt(11)
         
-        # Save document
-        doc.save(output_path)
+        # Save document to memory buffer
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
         
-        return f"Cover letter successfully created at: {output_path}"
+        # Encode as base64
+        doc_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        return {
+            "filename": filename,
+            "content": doc_base64,
+            "message": f"Cover letter successfully created: {filename}"
+        }
         
     except Exception as e:
         raise Exception(f"Error creating cover letter: {str(e)}")
 
 @mcp.tool()
 def create_formatted_document(
-    output_path: str,
     sections: list,
+    filename: str = "document.docx",
     title: str = None
-) -> str:
+) -> dict:
     """
     Create a custom formatted Word document with headings, paragraphs, and lists
+    Returns the document as base64 encoded string for delivery via Slack
     
     Args:
-        output_path: Full path where the .docx file should be saved
         sections: List of sections with heading and content (paragraphs, bullets, numbered lists)
+        filename: Name for the document file
         title: Optional document title
     
     Returns:
-        Success message with file path
+        Dictionary with filename and base64 encoded document content
     """
     try:
         doc = Document()
@@ -307,10 +331,19 @@ def create_formatted_document(
             
             doc.add_paragraph()  # Space between sections
         
-        # Save document
-        doc.save(output_path)
+        # Save document to memory buffer
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
         
-        return f"Document successfully created at: {output_path}"
+        # Encode as base64
+        doc_base64 = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        return {
+            "filename": filename,
+            "content": doc_base64,
+            "message": f"Document successfully created: {filename}"
+        }
         
     except Exception as e:
         raise Exception(f"Error creating document: {str(e)}")

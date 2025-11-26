@@ -1,0 +1,103 @@
+# Azure Container Apps deployment configuration
+# Deploy to Azure Container Apps with environment variables
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-search-chatbot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: job-search-chatbot
+  template:
+    metadata:
+      labels:
+        app: job-search-chatbot
+    spec:
+      containers:
+      - name: job-search-chatbot
+        image: ${CONTAINER_REGISTRY}/job-search-chatbot:latest
+        ports:
+        - containerPort: 3000
+          name: http
+        - containerPort: 8501
+          name: streamlit
+        env:
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: job-search-secrets
+              key: openai-api-key
+        - name: AZURE_OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: job-search-secrets
+              key: azure-openai-api-key
+        - name: AZURE_OPENAI_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: job-search-secrets
+              key: azure-openai-endpoint
+        - name: AZURE_OPENAI_API_VERSION
+          value: "2024-02-01"
+        - name: AZURE_OPENAI_DEPLOYMENT
+          valueFrom:
+            configMapKeyRef:
+              name: job-search-config
+              key: azure-openai-deployment
+        - name: AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT
+          valueFrom:
+            configMapKeyRef:
+              name: job-search-config
+              key: azure-openai-embeddings-deployment
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: job-search-secrets
+              key: slack-bot-token
+        - name: SLACK_SIGNING_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: job-search-secrets
+              key: slack-signing-secret
+        - name: SLACK_APP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: job-search-secrets
+              key: slack-app-token
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: job-search-chatbot
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 3000
+    name: http
+  - port: 8501
+    targetPort: 8501
+    name: streamlit
+  selector:
+    app: job-search-chatbot

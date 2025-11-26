@@ -1,5 +1,5 @@
 fastmcp
-jobspy
+python-jobspy
 langchain-mcp-adapters
 langchain-openai
 langgraph
@@ -9,4 +9,7 @@ pandas
 PyPDF2
 python-docx
 python-dotenv
+requests
+slack-bolt
+slack-sdk
 streamlit
