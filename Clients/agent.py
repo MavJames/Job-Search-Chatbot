@@ -130,6 +130,30 @@ def initialize_agent():
                     session = await session_ctx.__aenter__()
                     sessions[server_name] = (session, session_ctx)
 
+import json
+from typing import List, Optional, Dict
+# ... (existing imports)
+
+class CreateResumeArgs(BaseModel):
+    output_path: str = Field(..., description="The absolute path to save the resume .docx file")
+    name: str = Field(..., description="The full name of the person")
+    contact: Optional[Dict] = Field(None, description="Contact information dictionary")
+    summary: Optional[str] = Field(None, description="Professional summary")
+    experience: Optional[List[Dict]] = Field(None, description="List of professional experiences")
+    education: Optional[List[Dict]] = Field(None, description="List of educational qualifications")
+    skills: Optional[List[str]] = Field(None, description="List of skills")
+
+class CreateCoverLetterArgs(BaseModel):
+    output_path: str = Field(..., description="The absolute path to save the cover letter .docx file")
+    name: str = Field(..., description="The full name of the person")
+    body_paragraphs: List[str] = Field(..., description="A list of strings, where each string is a paragraph in the cover letter body")
+    contact: Optional[Dict] = Field(None, description="Contact information dictionary")
+    date: Optional[str] = Field(None, description="The date of the cover letter")
+    recipient: Optional[Dict] = Field(None, description="Recipient information dictionary")
+
+# ... (rest of the file)
+
+# In the initialize_agent function, inside the for loop:
                     tools = await load_mcp_tools(session)
 
                     # PATCH: Fix schema for filesystem tools if they are broken
@@ -163,11 +187,21 @@ def initialize_agent():
                                     )
 
                                 tool.args_schema = WriteFileArgs
+                    
+                    # PATCH: Fix schema for docx_server tools
+                    elif server_name == "docx_server":
+                        for tool in tools:
+                            if tool.name == "create_resume":
+                                tool.args_schema = CreateResumeArgs
+                            elif tool.name == "create_cover_letter":
+                                tool.args_schema = CreateCoverLetterArgs
 
                     all_tools.extend(tools)
                     logging.info(
                         f"Connected to server: {server_name}, loaded {len(tools)} tools"
                     )
+# ... (rest of the file)
+
                 except Exception as e:
                     logging.error(f"Failed to connect to server {server_name}: {e}")
                     continue
