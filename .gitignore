@@ -1,3 +1,14 @@
 # Environment files
 .env
 .env.*
+
+# cache files
+__pycache__
+
+# uv lock file
+uv.lock
+
+# uv environment
+uv.env
+
+

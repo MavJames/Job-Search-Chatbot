@@ -1,0 +1,36 @@
+[project]
+name = "job-search-chatbot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=2.13.1",
+    "langchain-mcp-adapters>=0.1.14",
+    "langchain-openai>=1.1.0",
+    "langgraph>=1.0.3",
+    "langmem>=0.0.30",
+    "openai>=2.8.1",
+    "pandas>=2.3.3",
+    "pydantic>=2.8.2",
+    "pydantic-settings>=2.3.4",
+    "pypdf2>=3.0.1",
+    "python-docx>=1.2.0",
+    "python-dotenv>=1.2.1",
+    "python-jobspy>=1.1.82",
+    "slack-bolt>=1.27.0",
+    "slack-sdk>=3.39.0",
+    "streamlit>=1.51.0",
+    "ruff",
+    "black",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 88

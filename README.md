@@ -40,19 +40,18 @@ AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=text-embedding-3-small
 Optional: set `FILESYSTEM_ROOT` to point the filesystem MCP server at a specific directory (defaults to the repository root).
 
 ## Local Development
-1. Create and activate a virtual environment.
+1. Initialize the project and create a virtual environment.
 	```bash
-	python3 -m venv .venv
-	source .venv/bin/activate
+	uv init
 	```
-2. Install dependencies.
+3. Install dependencies.
 	```bash
-	pip install -r requirements.txt
+	uv sync
 	```
-3. Ensure Node.js is available (for the filesystem MCP server invoked through `npx`).
-4. Launch the Streamlit client. MCP servers are started on demand by the client.
+4. Ensure Node.js is available (for the filesystem MCP server invoked through `npx`).
+5. Launch the Streamlit client. MCP servers are started on demand by the client.
 	```bash
-	streamlit run Clients/mcp_streamlit.py
+	uv run streamlit run Clients/mcp_streamlit.py
 	```
 
 The app will open at `http://localhost:8501`. Upload a resume (PDF or DOCX) to seed the memory system and start the conversation.
@@ -78,7 +77,9 @@ Servers/
   jobspy_server.py      # FastMCP job scraping server
   server_capabilities.json
   servers_config.json
-requirements.txt
+  servers_config.json
+pyproject.toml
+uv.lock
 README.md
 ```
 

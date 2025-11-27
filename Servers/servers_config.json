@@ -10,14 +10,20 @@
       ]
     },
     "docx_server": {
-      "command": "python3",
+      "command": "uv",
       "transport": "stdio",
-      "args": ["../Servers/docx_server.py"]
+      "args": [
+        "run",
+        "Servers/docx_server.py"
+      ]
     },
     "jobspy-server": {
-      "command": "python3",
+      "command": "uv",
       "transport": "stdio",
-      "args": ["../Servers/jobspy_server.py"]
+      "args": [
+        "run",
+        "Servers/jobspy_server.py"
+      ]
     }
   }
 }
