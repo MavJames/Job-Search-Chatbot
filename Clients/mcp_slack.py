@@ -5,6 +5,10 @@ Uses in-memory storage for local testing
 """
 
 import os
+import certifi
+
+# Fix for SSL certificate errors on macOS
+os.environ["SSL_CERT_FILE"] = certifi.where()
 import json
 import asyncio
 import logging
@@ -395,7 +399,6 @@ def handle_message(event, say, client):
     
     user_id = event["user"]
     text = event["text"]
-    channel = event["channel"]
     
     # Only respond in DMs or when the bot is mentioned
     channel_type = event.get("channel_type")
@@ -407,6 +410,10 @@ def handle_message(event, say, client):
     
     # Process the message
     process_user_input(user_id, text, say)
+
+@app.event("app_home_opened")
+def handle_app_home_opened_events(body, logger):
+    logger.info(body)
 
 def process_user_input(user_id: str, user_input: str, say):
     """Handle a user's message and get a response from the agent"""
@@ -420,8 +427,7 @@ def process_user_input(user_id: str, user_input: str, say):
     window_size = max(2 * WINDOW_TURNS, 2)
     window = msgs[-window_size:]
     
-    # Let them know we're working on it
-    say("Processing... :hourglass_flowing_sand:")
+
     
     try:
         # Get their resume if they've uploaded one

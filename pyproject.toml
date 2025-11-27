@@ -23,6 +23,7 @@ dependencies = [
     "streamlit>=1.51.0",
     "ruff",
     "black",
+    "certifi>=2025.11.12",
 ]
 
 [tool.ruff]
