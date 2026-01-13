@@ -2,6 +2,7 @@
 Job Search Assistant - Slack Version (Local Storage)
 Converted from Streamlit to work with Slack's messaging interface
 Uses in-memory storage for local testing
+Files are returned in chat, not saved locally
 """
 
 import os
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-CONFIG_PATH = Path(__file__).resolve().parent / "../Servers/servers_config.json"
+CONFIG_PATH = Path(__file__).resolve().parent / "../Servers/servers_config_slack.json"
 CAPABILITIES_PATH = Path(__file__).resolve().parent / "../Servers/server_capabilities.json"
 
 # Only keep the last few messages in context to avoid token limits
@@ -59,9 +60,7 @@ class LocalSessionManager:
     def __init__(self):
         # Just store everything in memory
         self.chat_histories = {}  # user_id -> list of messages
-        self.user_resumes = {}    # user_id -> {resume_text, resume_path}
-        self.temp_dir = Path(tempfile.gettempdir()) / "job_bot_resumes"
-        self.temp_dir.mkdir(exist_ok=True)
+        self.user_resumes = {}    # user_id -> resume_text only (no file saving)
     
     def get_chat_history(self, user_id: str) -> List[Dict]:
         """Pull up the conversation history for this user"""
@@ -77,29 +76,13 @@ class LocalSessionManager:
             "content": content
         })
     
-    def get_resume_info(self, user_id: str) -> Dict:
-        """Get the user's resume text and storage location"""
-        return self.user_resumes.get(user_id, {
-            "resume_text": None,
-            "resume_path": None
-        })
+    def get_resume_text(self, user_id: str) -> Optional[str]:
+        """Get the user's resume text"""
+        return self.user_resumes.get(user_id)
     
-    def save_resume_info(self, user_id: str, resume_path: str, resume_text: str):
-        """Store the resume info after upload"""
-        self.user_resumes[user_id] = {
-            "resume_path": resume_path,
-            "resume_text": resume_text
-        }
-    
-    def save_resume_file(self, user_id: str, file_content: bytes, filename: str) -> str:
-        """Save the actual resume file to temp storage"""
-        safe_filename = f"{user_id}_{uuid.uuid4()}_{filename}"
-        file_path = self.temp_dir / safe_filename
-        
-        with open(file_path, 'wb') as f:
-            f.write(file_content)
-        
-        return str(file_path)
+    def save_resume_text(self, user_id: str, resume_text: str):
+        """Store just the resume text (no file saving)"""
+        self.user_resumes[user_id] = resume_text
 
 # ============================================================================
 # Resume text extraction - same logic as the Streamlit version
@@ -164,11 +147,15 @@ def build_enhanced_system_prompt(resume_text: Optional[str] = None) -> str:
     capabilities = load_server_capabilities()
     current_date = datetime.now().strftime("%B %d, %Y")
 
-    base_prompt = f"""You are a Job Search Assistant helping candidates find opportunities and navigate applications. When asked to create a resume
-    return a docx file that is in Microsoft Word format. Today is {current_date}.
+    base_prompt = f"""You are a Job Search Assistant helping candidates find opportunities and navigate applications. 
 
+IMPORTANT: When creating resumes or cover letters, you MUST use the create_resume or create_cover_letter tools. 
+These tools will return the file content that will be automatically shared with the user in Slack.
+DO NOT try to save files locally or provide file paths - the MCP server handles file creation and the Slack bot handles delivery.
 
-    ## YOUR ROLE & PHILOSOPHY
+Today is {current_date}.
+
+## YOUR ROLE & PHILOSOPHY
 
 You help candidates pursue their CAREER GOALS, not just roles matching their current experience. A candidate's current position (e.g., intern, entry-level) does NOT define what they're capable of or aspiring to achieve. Always ask about:
 - What roles they WANT to pursue
@@ -214,16 +201,18 @@ For jobs they want to apply to:
 When creating resumes or cover letters:
 
 **RESUMES:**
+- Use the create_resume tool with the resume content
 - Tailor to the SPECIFIC job posting
 - Lead with relevant skills and projects, not chronological history
 - Quantify achievements wherever possible
 - Highlight transferable skills from different contexts
 - Position current/past roles in terms of relevant skills gained
 - Use keywords from the job description naturally
-- Format: Create as .docx (Microsoft Word format) using create_resume tool
 - Keep to ONE page unless explicitly requested otherwise
+- The tool will return the file which will be automatically shared in Slack
 
 **COVER LETTERS:**
+- Use the create_cover_letter tool with the cover letter content
 - Address specific job requirements and company
 - Tell the story of WHY they're pursuing this role
 - Connect their background to the role's needs (even if indirect)
@@ -231,7 +220,7 @@ When creating resumes or cover letters:
 - Address any career transitions or non-traditional paths proactively
 - 3-4 substantial paragraphs
 - Professional, enthusiastic tone
-- Format: Create as .docx using create_cover_letter tool
+- The tool will return the file which will be automatically shared in Slack
 
 ## KEY PRINCIPLES
 
@@ -253,7 +242,9 @@ When creating resumes or cover letters:
 """
 
     if resume_text:
-        base_prompt += f"""CANDIDATE RESUME:
+        base_prompt += f"""
+
+CANDIDATE RESUME:
 {resume_text}
 
 """
@@ -445,10 +436,11 @@ def run_agent_sync(messages, agent, loop, thread_id: str):
                     "configurable": {"thread_id": thread_id},
                 },
             )
-            return result["messages"][-1].content if result.get("messages") else "No reply."
+            # Return both the text response and the full result for tool call inspection
+            return result
         except Exception as e:
             logging.exception("Agent error")
-            return f"Error: {str(e)}"
+            return {"error": str(e)}
 
     future = asyncio.run_coroutine_threadsafe(_run_agent(), loop)
     return future.result(timeout=120)
@@ -475,6 +467,52 @@ app = App(
 )
 
 # ============================================================================
+# Helper function to detect and handle file returns from MCP tools
+# ============================================================================
+
+def extract_files_from_tool_calls(result):
+    """
+    Check if the agent's tool calls returned any files (like .docx documents)
+    Returns a list of (filename, file_content) tuples
+    """
+    files = []
+    
+    if not result.get("messages"):
+        return files
+    
+    # Look through all messages for tool responses
+    for msg in result["messages"]:
+        # Check if this is a tool message with content
+        if hasattr(msg, 'type') and msg.type == 'tool':
+            tool_content = msg.content
+            
+            # If the tool returned a file path or reference, we need to handle it
+            # The docx MCP server should return the file content or a path
+            if isinstance(tool_content, str):
+                # Check if this looks like a file path
+                if tool_content.endswith('.docx'):
+                    # Extract filename from path
+                    filename = Path(tool_content).name
+                    
+                    # Try to read the file if it exists
+                    if Path(tool_content).exists():
+                        with open(tool_content, 'rb') as f:
+                            files.append((filename, f.read()))
+                        # Delete the file after reading so it doesn't stay on disk
+                        try:
+                            Path(tool_content).unlink()
+                        except Exception as e:
+                            logger.warning(f"Could not delete temporary file {tool_content}: {e}")
+            
+            # Handle base64 or binary content if the tool returns it directly
+            elif isinstance(tool_content, bytes):
+                # Generate a reasonable filename
+                filename = f"document_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+                files.append((filename, tool_content))
+    
+    return files
+
+# ============================================================================
 # Slack event handlers
 # ============================================================================
 
@@ -491,16 +529,17 @@ def handle_message(event, say, client):
     
     # Only respond in DMs or when the bot is mentioned
     channel_type = event.get("channel_type")
-    if channel_type != "im" and f"<@{client.auth_test()['user_id']}>" not in text:
+    bot_user_id = client.auth_test()['user_id']
+    if channel_type != "im" and f"<@{bot_user_id}>" not in text:
         return
     
     # Clean up the bot mention if it's there
-    text = text.replace(f"<@{client.auth_test()['user_id']}>", "").strip()
+    text = text.replace(f"<@{bot_user_id}>", "").strip()
     
     # Process the message
-    process_user_input(user_id, text, say)
+    process_user_input(user_id, text, channel, say, client)
 
-def process_user_input(user_id: str, user_input: str, say):
+def process_user_input(user_id: str, user_input: str, channel: str, say, slack_client):
     """Handle a user's message and get a response from the agent"""
     # Save the user's message
     session_manager.add_to_chat_history(user_id, "user", user_input)
@@ -517,21 +556,45 @@ def process_user_input(user_id: str, user_input: str, say):
     
     try:
         # Get their resume if they've uploaded one
-        resume_info = session_manager.get_resume_info(user_id)
-        resume_text = resume_info.get("resume_text")
+        resume_text = session_manager.get_resume_text(user_id)
         
         # Build the full prompt with their resume context
         system_prompt = build_enhanced_system_prompt(resume_text)
         messages = [{"role": "system", "content": system_prompt}] + window
         
         # Run the agent
-        reply = run_agent_sync(messages, agent, event_loop, thread_id=user_id)
+        result = run_agent_sync(messages, agent, event_loop, thread_id=user_id)
+        
+        if "error" in result:
+            say(f"Error: {result['error']}")
+            return
+        
+        # Get the text response
+        reply = result["messages"][-1].content if result.get("messages") else "No reply."
+        
+        # Check if any files were created
+        files = extract_files_from_tool_calls(result)
         
         # Save the response
         session_manager.add_to_chat_history(user_id, "assistant", reply)
         
-        # Send it back to them
+        # Send the text response
         say(reply)
+        
+        # Upload any files that were created
+        for filename, file_content in files:
+            try:
+                slack_client.files_upload_v2(
+                    channel=channel,
+                    file=file_content,
+                    filename=filename,
+                    title=filename,
+                    initial_comment=f"Here's your {filename}"
+                )
+                logger.info(f"Uploaded file {filename} to channel {channel}")
+            except Exception as e:
+                logger.error(f"Failed to upload file {filename}: {e}")
+                say(f"⚠️ Created {filename} but couldn't upload it to Slack: {str(e)}")
         
     except Exception as e:
         err = f"Error: {str(e)}"
@@ -567,11 +630,8 @@ def handle_file_upload(event, client, say):
         resume_text = extract_resume_text(file_content, filename)
         
         if resume_text:
-            # Save it locally
-            file_path = session_manager.save_resume_file(user_id, file_content, filename)
-            
-            # Store the resume info for this user
-            session_manager.save_resume_info(user_id, file_path, resume_text)
+            # Store ONLY the text, not the file
+            session_manager.save_resume_text(user_id, resume_text)
             
             say("✅ Resume uploaded successfully! I'll use this info to help with your job search.")
         else:
